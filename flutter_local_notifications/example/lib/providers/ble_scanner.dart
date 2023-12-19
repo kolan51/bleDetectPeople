@@ -50,12 +50,12 @@ class BleScanner implements ReactiveState<BleScannerState> {
           _devices.indexWhere((DiscoveredDevice d) => d.id == device.id);
       if (knownDeviceIndex >= 0) {
         _devices[knownDeviceIndex] = device;
-        _devicesRssiMap.update(device.name, (int value) => device.rssi);
+        _devicesRssiMap.update(device.id, (int value) => device.rssi);
       } else {
         _devices.add(device);
-        _devicesRssiMap.putIfAbsent(device.name, () => device.rssi);
+        _devicesRssiMap.putIfAbsent(device.id, () => device.rssi);
       }
-      log += '${device.name} ${device.rssi}\n';
+      log += '${device.id} ${device.rssi}\n';
       _pushState();
     }, onError: (Object e) => _logMessage('Device scan fails with error: $e'));
     _pushState();

@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:android_intent/android_intent.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:provider/provider.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -25,6 +26,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import 'providers/ble_logger.dart';
 import 'providers/ble_scanner.dart';
+import 'providers/local_provider.dart';
 import 'screens/about_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
@@ -95,12 +97,12 @@ Future<void> openLocationSetting() async {
   await intent.launch();
 }
 
-
 /// Using permission_handler for both
 Future<String> getLocationPermissionStatus() async {
   print('\n\nTrackingRepository.getLocationPermissionStatus() started\n\n');
   late String permission;
-  permission = await Permission.locationAlways.status.then((value) {
+
+  permission = await Permission.locationWhenInUse.status.then((value) {
     print(
         'TrackingRepository.getLocationPermissionStatus() Permission.locationAlways.status is: ${value.name}\n\n');
     switch (value) {
@@ -114,16 +116,13 @@ Future<String> getLocationPermissionStatus() async {
         return 'granted';
       case PermissionStatus.restricted:
         return 'restricted';
-      case PermissionStatus.provisional:
-        // TODO: Handle this case.
-        break;
     }
     return permission;
   });
   return permission;
 }
 
-Future<String> requestLocationPermissionBacground() async {
+Future<String> requestLocationPermission() async {
   late String permission;
   var locationWhenInUseStatus =
       await Permission.locationWhenInUse.status.then((value) {
@@ -240,40 +239,30 @@ Future<String> requestLocationPermissionBacground() async {
   return permission;
 }
 
-Future<String> requestLocationPermission() async {
-  print('LocationRepository.requestLocationPermission started');
-  late String permission;
-  // general location doesn't open the popup
-  // var status = await Permission.location.status;
-  // print('Permission.location.status is $status');
-  var status = await Permission.locationWhenInUse.status;
-  print('Permission.locationWhenInUse.status is $status');
+Future _initLocationService() async {
+  loc.Location location = loc.Location();
 
-  /// NOT Granted
-  if (!status.isGranted) {
-    // var status = await Permission.location.request();
-    // print('Permission.location.request() status is $status');
-    var status = await Permission.locationWhenInUse.request();
-    print('Permission.locationWhenInUse.request() status is $status');
-    if (status.isGranted) {
-      permission = 'granted';
-    } else {
-      permission = 'denied';
+  bool? _serviceEnabled;
+  loc.PermissionStatus _permissionGranted = loc.PermissionStatus.denied;
+  loc.LocationData? _locationData;
+
+  if (!await location.serviceEnabled()) {
+    if (!await location.requestService()) {
+      return;
     }
   }
 
-  /// Granted
-  else {
-    permission = 'granted';
+  var permission = await location.hasPermission();
+  if (permission == PermissionStatus.denied) {
+    permission = await location.requestPermission();
+    if (permission != PermissionStatus.granted) {
+      return;
+    }
   }
-  return permission;
+
+  var loca = await location.getLocation();
+  print("${loca.latitude} ${loca.longitude}");
 }
-
-loc.Location location = loc.Location();
-
-bool? _serviceEnabled;
-loc.PermissionStatus _permissionGranted = loc.PermissionStatus.denied;
-loc.LocationData? _locationData;
 
 Future<void> checkPerm() async {
   final DeviceInfoPlugin deviceInfoPlugin = DeviceInfoPlugin();
@@ -287,6 +276,8 @@ Future<void> checkPerm() async {
 
     if (await Permission.locationWhenInUse.request().isGranted) {
       await Permission.locationAlways.request();
+
+      print(await Permission.locationAlways.request());
     }
   }
 
@@ -295,8 +286,6 @@ Future<void> checkPerm() async {
   if (statusLocation.isGranted) {
     //isGranted
   } else if (statusLocation.isDenied) {
-    print('here');
-
     Map<Permission, PermissionStatus> statusLocationMap = await [
       Permission.location,
     ].request();
@@ -333,22 +322,28 @@ Future<void> checkPerm() async {
   if (30 < androidInfo.version.sdkInt) {
     Map<Permission, PermissionStatus> statuses = await <Permission>[
       Permission.bluetoothScan,
-      Permission.bluetoothAdvertise
     ].request();
 
-    if (statuses[Permission.bluetoothScan] == PermissionStatus.granted &&
-        statuses[Permission.bluetoothScan] == PermissionStatus.granted) {
+    if (statuses[Permission.bluetoothScan] == PermissionStatus.granted) {
       // permission granted
     }
     return;
-  }
-  final PermissionStatus status = await Permission.bluetooth.status;
-  if (status.isDenied) {
-    await Permission.bluetooth.request();
-  }
+  } else {
+    print('tu');
+    final PermissionStatus status = await Permission.bluetooth.status;
+    final PermissionStatus statusLoc = await Permission.location.status;
 
-  if (await Permission.bluetooth.status.isPermanentlyDenied) {
-    await openAppSettings();
+    if (status.isDenied) {
+      await Permission.bluetooth.request();
+    }
+
+    if (statusLoc.isDenied) {
+      await Permission.location.request();
+    }
+
+    if (await Permission.bluetooth.status.isPermanentlyDenied) {
+      await openAppSettings();
+    }
   }
 }
 
@@ -362,8 +357,14 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await checkPerm();
-  await getLocationPermissionStatus();
-  await requestLocationPermissionBacground();
+  String status = await getLocationPermissionStatus();
+  if (status != 'granted') {
+    await requestLocationPermission();
+  }
+
+  //await _initLocationService();
+
+  //await requestLocationPermissionBacground();
 
   final FlutterReactiveBle ble = FlutterReactiveBle();
   final BleLogger bleLogger = BleLogger(ble: ble);
@@ -481,6 +482,9 @@ Future<void> main() async {
   );
   runApp(MultiProvider(
     providers: <SingleChildWidget>[
+      ChangeNotifierProvider<LocalProvider>(
+        create: (_) => LocalProvider(),
+      ),
       Provider<BleScanner>.value(value: scanner),
       Provider<BleLogger>.value(value: bleLogger),
       StreamProvider<BleScannerState?>(
